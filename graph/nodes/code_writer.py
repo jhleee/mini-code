@@ -5,13 +5,17 @@ Phase 1: Structured Output 적용
 - with_structured_output()으로 CodeWriterOutput 스키마 강제
 - generated_code와 generated_test 분리 반환
 - Reasoning model support: <think> tag handling
+
+Phase 3: Reflection Loop
+- RetryContext 기반 에러 타입별 프롬프트 차별화
+- 이전 에러 히스토리 포함
 """
 import json
 import re
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
-from graph.state import AgentState, CodeWriterOutput
+from graph.state import AgentState, CodeWriterOutput, RetryContext
 from graph.llm_utils import (
     extract_response_content,
     extract_think_content,
@@ -64,26 +68,21 @@ class CodeWriter:
         current_task = tasks[current_idx]
         target_file = current_task.target_file
         context = state.get("context", "")
+        retry_context = state.get("retry_context")
 
         # Get current file content
         file_map = state.get("file_map", {})
         file_state = file_map.get(target_file)
         current_content = file_state.content if file_state else ""
 
-        prompt = f"""Task: {current_task.description}
-
-Target file: {target_file}
-Action: {current_task.action}
-
-Current file content:
-```python
-{current_content if current_content else "# Empty file"}
-```
-
-Context from workspace:
-{context}
-
-Generate the code snippet to {current_task.action}."""
+        # Build prompt (Phase 3: differentiated based on retry context)
+        prompt = self._build_prompt(
+            task=current_task,
+            target_file=target_file,
+            current_content=current_content,
+            context=context,
+            retry_context=retry_context
+        )
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
@@ -186,6 +185,105 @@ Generate the code snippet to {current_task.action}."""
             return json.loads(text)
         except:
             return None
+
+    def _build_prompt(
+        self,
+        task,
+        target_file: str,
+        current_content: str,
+        context: str,
+        retry_context: RetryContext = None
+    ) -> str:
+        """
+        Build differentiated prompt based on retry context (Phase 3)
+
+        Different error types require different fix strategies:
+        - syntax: Focus on Python syntax rules
+        - lint: Focus on code style and best practices
+        - test: Focus on logic and edge cases
+        - static_check: Combined syntax/lint guidance
+        """
+        base_prompt = f"""Task: {task.description}
+
+Target file: {target_file}
+Action: {task.action}
+
+Current file content:
+```python
+{current_content if current_content else "# Empty file"}
+```
+
+Context from workspace:
+{context}"""
+
+        if not retry_context:
+            # First attempt - standard prompt
+            return base_prompt + f"\n\nGenerate the code snippet to {task.action}."
+
+        # Retry attempt - add error-specific guidance
+        error_type = retry_context.error_type
+        attempt_info = f"Attempt {retry_context.attempt}/{retry_context.max_attempts}"
+
+        retry_prompt = f"""
+
+--- RETRY INFORMATION ---
+{attempt_info}
+
+Previous attempt failed with {error_type.upper()} error:
+```
+{retry_context.error_details}
+```
+
+Failed code:
+```python
+{retry_context.failed_code}
+```
+"""
+
+        # Error type-specific guidance
+        if error_type == "syntax":
+            guidance = """
+FOCUS: Fix Python syntax errors
+- Check for missing colons, parentheses, brackets
+- Verify proper indentation (4 spaces)
+- Ensure valid Python keywords and operators
+- Check string quotes and escape characters
+"""
+        elif error_type in ["lint", "static_check"]:
+            guidance = """
+FOCUS: Fix code style and lint errors
+- Follow PEP8 style guidelines
+- Remove unused imports and variables
+- Fix line length issues (max 88-100 chars)
+- Ensure proper naming conventions
+- Fix undefined names and imports
+"""
+        elif error_type == "test":
+            guidance = """
+FOCUS: Fix failing tests
+- Review test failure messages carefully
+- Check edge cases and boundary conditions
+- Verify function logic and return values
+- Handle exceptions properly
+- Ensure correct data types
+"""
+        else:
+            guidance = """
+FOCUS: Fix runtime or logic errors
+- Review error message and traceback
+- Check variable names and scopes
+- Verify function signatures
+- Handle edge cases
+"""
+
+        # Add previous error history if available
+        history = ""
+        if retry_context.previous_errors:
+            history = "\n\nPrevious error history:\n"
+            for i, err in enumerate(retry_context.previous_errors, 1):
+                history += f"{i}. {err[:200]}\n"
+
+        return base_prompt + retry_prompt + guidance + history + "\n\nGenerate CORRECTED code that fixes the above error(s)."
 
     def __call__(self, state: AgentState) -> Dict[str, Any]:
         """Sync wrapper for LangGraph compatibility"""

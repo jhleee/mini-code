@@ -10,7 +10,7 @@ Pattern: Code-Then-Execute (⭐⭐⭐⭐)
 - Faster feedback loop
 """
 from typing import Dict, Any
-from graph.state import AgentState, FeedbackResult, LintError
+from graph.state import AgentState, FeedbackResult, LintError, RetryContext
 from graph.nodes.analyzer import StaticAnalyzer
 
 
@@ -135,9 +135,35 @@ class StaticChecker:
                 test_results=[]
             )
 
+            # Create RetryContext for static check failure (Phase 3)
+            error_type = "syntax" if not syntax_valid else "lint"
+            error_details = (
+                "\n".join(analysis["syntax_errors"])
+                if not syntax_valid
+                else "\n".join([f"Line {e.line}: [{e.code}] {e.message}" for e in analysis["lint_errors"][:5]])
+            )
+
+            previous_context = state.get("retry_context")
+            previous_errors = []
+            if previous_context and previous_context.error_details:
+                previous_errors = previous_context.previous_errors + [previous_context.error_details]
+                previous_errors = previous_errors[-3:]  # Keep last 3
+
+            retry_context = RetryContext(
+                error_type="static_check",
+                failed_code=generated_code,
+                error_details=f"[{error_type.upper()}]\n{error_details}",
+                attempt=retry_count + 1,
+                max_attempts=max_retries,
+                previous_errors=previous_errors
+            )
+
+            print(f"[STATIC_CHECKER] Created RetryContext: {error_type} error")
+
             return {
                 "status": "static_check_failed",
                 "feedback": feedback,
                 "file_map": file_map,
-                "retry_count": retry_count + 1
+                "retry_count": retry_count + 1,
+                "retry_context": retry_context
             }

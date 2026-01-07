@@ -75,6 +75,7 @@ def run_agent(
         "generated_test": "",  # Phase 1: separated test code
         "feedback": None,      # Phase 2: rich feedback
         "exec_result": None,   # backward compatibility
+        "retry_context": None, # Phase 3: differentiated error handling
         "retry_count": 0,
         "max_retries": 3,
         "status": "initializing"
