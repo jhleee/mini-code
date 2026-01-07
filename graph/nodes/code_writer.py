@@ -12,7 +12,12 @@ from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState, CodeWriterOutput
-from graph.llm_utils import extract_response_content
+from graph.llm_utils import (
+    extract_response_content,
+    extract_think_content,
+    log_llm_interaction,
+    log_execution
+)
 
 
 SYSTEM_PROMPT = """You are an expert software engineer writing clean, production-ready code.
@@ -39,10 +44,12 @@ class CodeWriter:
 
     Uses llm.with_structured_output() to enforce CodeWriterOutput schema.
     Returns generated_code and generated_test separately.
+    Logs reasoning traces from reasoning models.
     """
 
-    def __init__(self, llm: ChatOpenAI):
+    def __init__(self, llm: ChatOpenAI, workspace_dir: str = None):
         self.llm = llm
+        self.workspace_dir = workspace_dir
         # Structured output을 지원하는 LLM으로 변환
         self.structured_llm = llm.with_structured_output(CodeWriterOutput)
 
@@ -109,21 +116,40 @@ Generate the code snippet to {current_task.action}."""
             print("[CODE_WRITER] Falling back to regex parsing...")
 
             # Fallback: 기존 방식
-            code, test_code = await self._fallback_parse(messages)
+            code, test_code = await self._fallback_parse(messages, current_task.description)
             imports = []
 
-        return {
+        result = {
             "generated_code": code,
             "generated_test": test_code,
             "status": f"code_generated_task_{current_idx}"
         }
 
-    async def _fallback_parse(self, messages: list) -> tuple:
+        # Log execution
+        if self.workspace_dir:
+            log_execution(self.workspace_dir, "code_writer", result)
+
+        return result
+
+    async def _fallback_parse(self, messages: list, task_description: str = "") -> tuple:
         """Fallback: regex 기반 파싱 (structured output 실패 시)"""
         response = await self.llm.ainvoke(messages)
 
         # Extract content and remove <think> tags from reasoning models
+        raw_content = response.content if hasattr(response, 'content') else str(response)
+        reasoning_trace = extract_think_content(raw_content)
         content = extract_response_content(response)
+
+        # Log interaction
+        if self.workspace_dir:
+            log_llm_interaction(
+                workspace_dir=self.workspace_dir,
+                node_name="code_writer_fallback",
+                prompt=task_description[:500],
+                response=content[:1000],
+                reasoning_trace=reasoning_trace,
+                metadata={"task": task_description}
+            )
 
         # Try JSON extraction
         result = self._extract_json_from_markdown(content)

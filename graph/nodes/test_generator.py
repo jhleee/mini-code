@@ -2,13 +2,19 @@
 TestGenerator Node - 파일별 종합 테스트 생성
 
 Reasoning model support: <think> tag handling
+Logs reasoning traces and execution.
 """
 import re
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState
-from graph.llm_utils import extract_response_content
+from graph.llm_utils import (
+    extract_response_content,
+    extract_think_content,
+    log_llm_interaction,
+    log_execution
+)
 
 
 SYSTEM_PROMPT = """Generate a comprehensive unit test for the given function.
@@ -37,8 +43,9 @@ def test_add():
 class TestGenerator:
     """Generates comprehensive tests for accumulated file"""
 
-    def __init__(self, llm: ChatOpenAI):
+    def __init__(self, llm: ChatOpenAI, workspace_dir: str = None):
         self.llm = llm
+        self.workspace_dir = workspace_dir
 
     async def generate_test_for_file(self, file_path: str, file_content: str) -> str:
         """Generate comprehensive test for entire file"""
@@ -59,7 +66,20 @@ All test functions should be in one response."""
         response = await self.llm.ainvoke(messages)
 
         # Extract content and remove <think> tags from reasoning models
+        raw_content = response.content if hasattr(response, 'content') else str(response)
+        reasoning_trace = extract_think_content(raw_content)
         content = extract_response_content(response)
+
+        # Log interaction
+        if self.workspace_dir:
+            log_llm_interaction(
+                workspace_dir=self.workspace_dir,
+                node_name="test_generator",
+                prompt=prompt[:1000],
+                response=content[:1000],
+                reasoning_trace=reasoning_trace,
+                metadata={"file": file_path, "content_length": len(file_content)}
+            )
 
         # Extract all test functions
         test_functions = re.findall(r'def test_\w+.*?(?=\ndef\s|\Z)', content, re.DOTALL)
@@ -101,10 +121,16 @@ All test functions should be in one response."""
 
             print(f"[TEST_GENERATOR] Generated {len(test_code)} chars of tests for {file_path}")
 
-        return {
+        result = {
             "file_map": file_map,
             "status": "tests_generated"
         }
+
+        # Log execution
+        if self.workspace_dir:
+            log_execution(self.workspace_dir, "test_generator", result)
+
+        return result
 
     def __call__(self, state: AgentState) -> Dict[str, Any]:
         """Sync wrapper"""

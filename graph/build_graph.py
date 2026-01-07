@@ -61,13 +61,13 @@ def build_agent(
         llm = create_llm_from_env()
 
     # Initialize nodes with session-specific workspace
-    planner = Planner(llm)
+    planner = Planner(llm, workspace_dir)
     retriever = Retriever(workspace_dir)
-    code_writer = CodeWriter(llm)
+    code_writer = CodeWriter(llm, workspace_dir)
     file_builder = FileBuilder()
     executor = Executor(workspace_dir)
     critic = Critic()
-    test_generator = TestGenerator(llm)
+    test_generator = TestGenerator(llm, workspace_dir)
     repo_manager = RepoManager(workspace_dir)
 
     # Build graph
