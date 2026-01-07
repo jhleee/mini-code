@@ -7,6 +7,7 @@ from graph.nodes.planner import Planner
 from graph.nodes.retriever import Retriever
 from graph.nodes.code_writer import CodeWriter
 from graph.nodes.file_builder import FileBuilder
+from graph.nodes.static_checker import StaticChecker
 from graph.nodes.executor import Executor
 from graph.nodes.critic import Critic
 from graph.nodes.test_generator import TestGenerator
@@ -14,7 +15,7 @@ from graph.nodes.repo_manager import RepoManager
 from graph.llm_utils import create_llm_from_env
 
 
-def should_continue(state: AgentState) -> str:
+def should_continue_after_critic(state: AgentState) -> str:
     """Routing logic after critic evaluation"""
     current_idx = state.get("current_task_idx", 0)
     total_tasks = len(state.get("tasks", []))
@@ -29,6 +30,27 @@ def should_continue(state: AgentState) -> str:
     # Continue to next task
     print(f"[ROUTING] Continuing to task {current_idx}")
     return "retrieve"
+
+
+def should_execute_after_static_check(state: AgentState) -> str:
+    """
+    Routing logic after static check (Phase 3: Code-Then-Execute)
+
+    If static check passed → execute
+    If static check failed → write (retry)
+    """
+    status = state.get("status", "")
+
+    if status == "static_check_passed":
+        print(f"[ROUTING] Static check passed → execute")
+        return "execute"
+    elif status == "static_check_failed":
+        print(f"[ROUTING] Static check failed → retry code_writer")
+        return "write"
+    else:
+        # Fallback: continue to execute
+        print(f"[ROUTING] Unknown status '{status}', defaulting to execute")
+        return "execute"
 
 
 def build_agent(
@@ -65,6 +87,7 @@ def build_agent(
     retriever = Retriever(workspace_dir)
     code_writer = CodeWriter(llm, workspace_dir)
     file_builder = FileBuilder()
+    static_checker = StaticChecker()  # Phase 3: Code-Then-Execute gate
     executor = Executor(workspace_dir)
     critic = Critic()
     test_generator = TestGenerator(llm, workspace_dir)
@@ -78,6 +101,7 @@ def build_agent(
     graph.add_node("retrieve", retriever)
     graph.add_node("write", code_writer)
     graph.add_node("build", file_builder)
+    graph.add_node("static_check", static_checker)  # Phase 3: Static analysis gate
     graph.add_node("execute", executor)
     graph.add_node("critic", critic)
     graph.add_node("test_gen", test_generator)
@@ -88,13 +112,26 @@ def build_agent(
     graph.add_edge("plan", "retrieve")
     graph.add_edge("retrieve", "write")
     graph.add_edge("write", "build")  # Append to file
-    graph.add_edge("build", "execute")
+
+    # Phase 3: Code-Then-Execute - Static check before execution
+    graph.add_edge("build", "static_check")
+
+    # Conditional routing from static_check
+    graph.add_conditional_edges(
+        "static_check",
+        should_execute_after_static_check,
+        {
+            "execute": "execute",  # Passed → execute
+            "write": "write"       # Failed → retry code_writer
+        }
+    )
+
     graph.add_edge("execute", "critic")
 
     # Conditional routing from critic
     graph.add_conditional_edges(
         "critic",
-        should_continue,
+        should_continue_after_critic,
         {
             "retrieve": "retrieve",  # Next task or retry
             "test_gen": "test_gen"   # All done, generate tests
