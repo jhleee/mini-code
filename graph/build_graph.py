@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
+import os
 
 from graph.state import AgentState
 from graph.nodes.planner import Planner
@@ -10,6 +11,7 @@ from graph.nodes.executor import Executor
 from graph.nodes.critic import Critic
 from graph.nodes.test_generator import TestGenerator
 from graph.nodes.repo_manager import RepoManager
+from graph.llm_utils import create_llm_from_env
 
 
 def should_continue(state: AgentState) -> str:
@@ -30,27 +32,33 @@ def should_continue(state: AgentState) -> str:
 
 
 def build_agent(
-    base_url: str = "https://82c2209d4a22.ngrok-free.app/v1",
-    api_key: str = "dummy",
-    model: str = "gpt-4o",
+    base_url: str = None,
+    api_key: str = None,
+    model: str = None,
     workspace_dir: str = "workspace"
 ) -> StateGraph:
     """Build the file-centric coding agent
 
     Args:
-        base_url: LLM endpoint URL
-        api_key: API key for LLM
-        model: Model name
+        base_url: LLM endpoint URL (overrides env var)
+        api_key: API key for LLM (overrides env var)
+        model: Model name (overrides env var)
         workspace_dir: Directory for session workspace
     """
 
-    # Initialize LLM
-    llm = ChatOpenAI(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        temperature=0.7
-    )
+    # Initialize LLM - prefer environment variables
+    if base_url or api_key or model:
+        # Use provided parameters (backward compatibility)
+        llm = ChatOpenAI(
+            base_url=base_url or os.getenv("LLM_BASE_URL", "https://82c2209d4a22.ngrok-free.app/v1"),
+            api_key=api_key or os.getenv("LLM_API_KEY", "dummy"),
+            model=model or os.getenv("LLM_MODEL", "gpt-4o"),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.7"))
+        )
+        print(f"[LLM] Initialized with base_url={llm.base_url}, model={llm.model_name}")
+    else:
+        # Use environment variables exclusively
+        llm = create_llm_from_env()
 
     # Initialize nodes with session-specific workspace
     planner = Planner(llm)

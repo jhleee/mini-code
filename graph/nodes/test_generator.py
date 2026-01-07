@@ -1,8 +1,14 @@
+"""
+TestGenerator Node - 파일별 종합 테스트 생성
+
+Reasoning model support: <think> tag handling
+"""
 import re
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState
+from graph.llm_utils import extract_response_content
 
 
 SYSTEM_PROMPT = """Generate a comprehensive unit test for the given function.
@@ -52,8 +58,11 @@ All test functions should be in one response."""
 
         response = await self.llm.ainvoke(messages)
 
+        # Extract content and remove <think> tags from reasoning models
+        content = extract_response_content(response)
+
         # Extract all test functions
-        test_functions = re.findall(r'def test_\w+.*?(?=\ndef\s|\Z)', response.content, re.DOTALL)
+        test_functions = re.findall(r'def test_\w+.*?(?=\ndef\s|\Z)', content, re.DOTALL)
 
         if test_functions:
             return '\n\n'.join(test_functions)

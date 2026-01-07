@@ -4,6 +4,7 @@ Planner Node - PRD를 분석하여 파일 구조와 태스크를 생성
 Phase 1: Structured Output 적용
 - with_structured_output()으로 Pydantic 모델 강제
 - regex 파싱 제거, 파싱 에러 방지
+- Reasoning model support: <think> tag handling
 """
 import json
 import re
@@ -11,6 +12,7 @@ from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState, FileState, Task, PlannerOutput
+from graph.llm_utils import extract_response_content
 
 
 SYSTEM_PROMPT = """You are a senior software engineer planning file structure and implementation tasks.
@@ -153,7 +155,9 @@ class Planner:
         response = await self.llm.ainvoke(messages)
 
         try:
-            json_str = self._extract_json(response.content)
+            # Extract content and remove <think> tags from reasoning models
+            content = extract_response_content(response)
+            json_str = self._extract_json(content)
             result = json.loads(json_str)
 
             file_map = {}

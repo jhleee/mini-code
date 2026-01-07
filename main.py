@@ -15,7 +15,7 @@ def load_prd(prd_path: str) -> str:
 
 def run_agent(
     prd_path: str,
-    base_url: str = "https://82c2209d4a22.ngrok-free.app/v1",
+    base_url: str = None,
     session_id: str = None,
     resume: bool = False
 ):
@@ -56,7 +56,11 @@ def run_agent(
     prd_content = load_prd(prd_path)
 
     # Build agent with session-specific workspace
-    print(f"Building agent with endpoint: {base_url}")
+    # If base_url is not provided, it will use environment variables
+    if base_url:
+        print(f"Building agent with endpoint: {base_url}")
+    else:
+        print(f"Building agent with environment variables")
     agent = build_agent(base_url=base_url, workspace_dir=workspace_path)
 
     # Initialize state
@@ -157,8 +161,8 @@ def main():
     run_parser.add_argument("--resume", action="store_true", help="Resume latest session")
     run_parser.add_argument(
         "--base-url",
-        default="https://82c2209d4a22.ngrok-free.app/v1",
-        help="LLM endpoint URL"
+        default=None,
+        help="LLM endpoint URL (overrides LLM_BASE_URL env var)"
     )
 
     # List command

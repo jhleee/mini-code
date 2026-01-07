@@ -4,6 +4,7 @@ CodeWriter Node - 태스크별 코드 생성
 Phase 1: Structured Output 적용
 - with_structured_output()으로 CodeWriterOutput 스키마 강제
 - generated_code와 generated_test 분리 반환
+- Reasoning model support: <think> tag handling
 """
 import json
 import re
@@ -11,6 +12,7 @@ from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState, CodeWriterOutput
+from graph.llm_utils import extract_response_content
 
 
 SYSTEM_PROMPT = """You are an expert software engineer writing clean, production-ready code.
@@ -120,14 +122,17 @@ Generate the code snippet to {current_task.action}."""
         """Fallback: regex 기반 파싱 (structured output 실패 시)"""
         response = await self.llm.ainvoke(messages)
 
+        # Extract content and remove <think> tags from reasoning models
+        content = extract_response_content(response)
+
         # Try JSON extraction
-        result = self._extract_json_from_markdown(response.content)
+        result = self._extract_json_from_markdown(content)
         if result and "code" in result:
             return result.get("code", ""), result.get("test_code", "")
 
         # Try code block extraction
         print("[CODE_WRITER] JSON failed, extracting code blocks...")
-        all_blocks = re.findall(r'```(?:python)?\n(.*?)```', response.content, re.DOTALL)
+        all_blocks = re.findall(r'```(?:python)?\n(.*?)```', content, re.DOTALL)
 
         code = all_blocks[0].strip() if len(all_blocks) > 0 else ""
         test_code = all_blocks[1].strip() if len(all_blocks) > 1 else "def test_placeholder():\n    pass"
