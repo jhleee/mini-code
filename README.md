@@ -9,6 +9,9 @@ PRD 문서를 입력하면 자동으로 Python 코드, 테스트, 문서를 생�
 ### 의존성 설치
 ```bash
 pip install langgraph langchain-openai pydantic
+
+# 선택: 정적 분석 도구 (Rich Feedback)
+pip install ruff mypy
 ```
 
 ### 빠른 시작
@@ -91,11 +94,12 @@ python main.py cleanup --days 7
 │   ├── build_graph.py        # LangGraph 정의
 │   ├── state.py              # State 스키마 (파일 중심)
 │   └── nodes/
-│       ├── planner.py        # 파일 구조 계획
+│       ├── planner.py        # 파일 구조 계획 (Structured Output)
 │       ├── retriever.py      # 컨텍스트 검색
-│       ├── code_writer.py    # 코드 생성
+│       ├── code_writer.py    # 코드 생성 (Structured Output)
 │       ├── file_builder.py   # 파일 누적
-│       ├── executor.py       # 테스트 실행
+│       ├── analyzer.py       # 정적 분석 (syntax/lint/type)
+│       ├── executor.py       # 테스트 실행 + FeedbackResult
 │       ├── critic.py         # 평가 및 재시도
 │       ├── test_generator.py # 테스트 생성
 │       └── repo_manager.py   # 파일 저장
@@ -177,6 +181,62 @@ python main.py cleanup --days 7
 | 파일 구조 계획 | ✅ | ✅ | ✅ | - | ✅ |
 | 동시 실행 격리 | - | ✅ | - | - | ✅ |
 | 세션 관리 | - | - | ✅ | - | ✅ |
+
+## 🧠 Agentic Patterns (from awesome-agentic-patterns)
+
+### ✅ 구현 완료
+
+#### Structured Output
+LLM 출력을 Pydantic 모델로 강제하여 JSON 파싱 에러 제거
+
+```python
+# planner.py - PlannerOutput 스키마 강제
+structured_llm = llm.with_structured_output(PlannerOutput)
+result: PlannerOutput = await structured_llm.ainvoke(messages)
+
+# code_writer.py - CodeWriterOutput 스키마 강제
+structured_llm = llm.with_structured_output(CodeWriterOutput)
+result: CodeWriterOutput = await structured_llm.ainvoke(messages)
+```
+
+- Fallback: 파싱 실패 시 regex 기반 파싱으로 자동 전환
+
+#### Rich Feedback Loops
+Syntax, Lint, Type 에러를 구조화된 형태로 수집
+
+```python
+# analyzer.py - 정적 분석
+analyzer = StaticAnalyzer()
+analysis = analyzer.analyze(code, filename)
+# → syntax_valid, syntax_errors, lint_errors
+
+# executor.py - FeedbackResult 반환
+feedback = FeedbackResult(
+    syntax_valid=True,
+    lint_passed=True,
+    lint_errors=[LintError(...)],
+    tests_passed=False,
+    test_results=[TestResult(name="test_add", passed=True), ...],
+    overall_passed=False,
+    summary="3/4 tests passed"
+)
+```
+
+- `ruff` 통합: `pip install ruff` 후 자동 활성화
+- `mypy` 통합: `pip install mypy` 후 자동 활성화
+- 미설치 시 graceful skip
+
+### 🔲 구현 예정
+
+| 패턴 | 우선순위 | 설명 |
+|------|----------|------|
+| Code-Then-Execute | ⭐⭐⭐⭐ | 정적 분석 통과 후에만 실행 |
+| Reflection Loop | ⭐⭐⭐⭐ | 에러 타입별 재시도 전략 |
+| Filesystem Checkpoint | ⭐⭐⭐⭐ | 태스크별 상태 저장/복구 |
+| Progressive Complexity | ⭐⭐⭐ | 간단한 태스크부터 처리 |
+| Anti-Reward-Hacking | ⭐⭐⭐ | 테스트 삭제/약화 감지 |
+
+자세한 구현 계획은 `CLAUDE.md` 참조
 
 ## 📊 성능
 
