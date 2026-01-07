@@ -66,15 +66,24 @@ def create_llm_from_env() -> ChatOpenAI:
     Create ChatOpenAI instance from environment variables.
 
     Environment variables:
-        LLM_BASE_URL: API endpoint URL
+        LLM_BASE_URL: API endpoint URL (required)
         LLM_API_KEY: API key (default: "dummy")
         LLM_MODEL: Model name (default: "gpt-4o")
         LLM_TEMPERATURE: Temperature (default: 0.7)
 
     Returns:
         Configured ChatOpenAI instance
+
+    Raises:
+        ValueError: If LLM_BASE_URL is not set
     """
-    base_url = os.getenv("LLM_BASE_URL", "https://82c2209d4a22.ngrok-free.app/v1")
+    base_url = os.getenv("LLM_BASE_URL")
+    if not base_url:
+        raise ValueError(
+            "LLM_BASE_URL environment variable is required. "
+            "Set it to your LLM API endpoint URL."
+        )
+
     api_key = os.getenv("LLM_API_KEY", "dummy")
     model = os.getenv("LLM_MODEL", "gpt-4o")
     temperature = float(os.getenv("LLM_TEMPERATURE", "0.7"))
@@ -159,12 +168,16 @@ def log_llm_interaction(
     logs_dir = Path(workspace_dir) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Capture timestamp once for consistency
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
+    timestamp_iso = now.isoformat()
+
     # Create log entry
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     log_file = logs_dir / f"{node_name}_{timestamp}.json"
 
     log_entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timestamp_iso,
         "node": node_name,
         "prompt": prompt,
         "response": response,
@@ -180,7 +193,7 @@ def log_llm_interaction(
     session_log = logs_dir / "session.log"
     with open(session_log, 'a', encoding='utf-8') as f:
         f.write(f"\n{'='*80}\n")
-        f.write(f"[{datetime.now().isoformat()}] {node_name.upper()}\n")
+        f.write(f"[{timestamp_iso}] {node_name.upper()}\n")
         f.write(f"{'='*80}\n\n")
 
         if reasoning_trace:
@@ -211,11 +224,14 @@ def log_execution(workspace_dir: str, node_name: str, state_update: Dict[str, An
     logs_dir = Path(workspace_dir) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Capture timestamp once for consistency
+    timestamp_iso = datetime.now().isoformat()
+
     execution_log = logs_dir / "execution.log"
 
     with open(execution_log, 'a', encoding='utf-8') as f:
         f.write(f"\n{'='*60}\n")
-        f.write(f"[{datetime.now().isoformat()}] NODE: {node_name}\n")
+        f.write(f"[{timestamp_iso}] NODE: {node_name}\n")
         f.write(f"{'='*60}\n")
 
         # Log key state changes

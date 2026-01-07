@@ -71,8 +71,16 @@ def build_agent(
     # Initialize LLM - prefer environment variables
     if base_url or api_key or model:
         # Use provided parameters (backward compatibility)
+        # Require base_url from env if not provided
+        final_base_url = base_url or os.getenv("LLM_BASE_URL")
+        if not final_base_url:
+            raise ValueError(
+                "LLM_BASE_URL must be provided either as argument or environment variable. "
+                "Set LLM_BASE_URL environment variable or pass base_url parameter."
+            )
+
         llm = ChatOpenAI(
-            base_url=base_url or os.getenv("LLM_BASE_URL", "https://82c2209d4a22.ngrok-free.app/v1"),
+            base_url=final_base_url,
             api_key=api_key or os.getenv("LLM_API_KEY", "dummy"),
             model=model or os.getenv("LLM_MODEL", "gpt-4o"),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.7"))

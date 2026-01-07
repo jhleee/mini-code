@@ -53,11 +53,14 @@ class StaticChecker:
             return {
                 "status": "static_check_failed",
                 "feedback": FeedbackResult(
-                    passed=False,
+                    syntax_valid=False,
                     syntax_errors=["Target file not found in file_map"],
+                    lint_passed=False,
                     lint_errors=[],
-                    type_errors=[],
-                    test_results=[]
+                    tests_passed=False,
+                    test_results=[],
+                    overall_passed=False,
+                    summary="Target file not found in file_map"
                 )
             }
 
@@ -95,11 +98,14 @@ class StaticChecker:
             return {
                 "status": "static_check_passed",
                 "feedback": FeedbackResult(
-                    passed=True,
+                    syntax_valid=True,
                     syntax_errors=[],
+                    lint_passed=True,
                     lint_errors=analysis["lint_errors"],  # Keep warnings
-                    type_errors=analysis["type_errors"],
-                    test_results=[]
+                    tests_passed=True,  # Not tested yet
+                    test_results=[],
+                    overall_passed=True,
+                    summary="Static analysis passed"
                 )
             }
         else:
@@ -111,11 +117,14 @@ class StaticChecker:
                     "current_task_idx": current_idx + 1,
                     "retry_count": 0,
                     "feedback": FeedbackResult(
-                        passed=False,
+                        syntax_valid=syntax_valid,
                         syntax_errors=analysis["syntax_errors"],
+                        lint_passed=lint_passed,
                         lint_errors=analysis["lint_errors"],
-                        type_errors=analysis["type_errors"],
-                        test_results=[]
+                        tests_passed=False,
+                        test_results=[],
+                        overall_passed=False,
+                        summary=f"Static analysis failed after {max_retries} retries"
                     )
                 }
 
@@ -128,11 +137,14 @@ class StaticChecker:
                 print(f"[STATIC_CHECKER] Rolled back {len(generated_code)} chars from {target_file}")
 
             feedback = FeedbackResult(
-                passed=False,
+                syntax_valid=syntax_valid,
                 syntax_errors=analysis["syntax_errors"],
+                lint_passed=lint_passed,
                 lint_errors=analysis["lint_errors"],
-                type_errors=analysis["type_errors"],
-                test_results=[]
+                tests_passed=False,
+                test_results=[],
+                overall_passed=False,
+                summary=f"Static analysis failed: {'syntax' if not syntax_valid else 'lint'} errors"
             )
 
             # Create RetryContext for static check failure (Phase 3)

@@ -30,7 +30,7 @@ class CheckpointManager:
         task_0.json
         task_1.json
         ...
-        latest.json -> symlink to latest checkpoint
+        latest.json -> copy of latest checkpoint
     """
 
     def __init__(self, workspace_dir: str):
@@ -61,7 +61,7 @@ class CheckpointManager:
         with open(checkpoint_file, 'w', encoding='utf-8') as f:
             json.dump(checkpoint, f, indent=2, ensure_ascii=False)
 
-        # Update latest symlink
+        # Update latest copy
         latest_file = self.checkpoints_dir / "latest.json"
         try:
             if latest_file.exists() or latest_file.is_symlink():

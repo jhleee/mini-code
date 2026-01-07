@@ -59,7 +59,7 @@ class RetryContext(BaseModel):
     Provides context-specific information for code_writer to
     generate better fixes based on error type.
     """
-    error_type: Literal["syntax", "lint", "type", "test", "runtime", "static_check"]
+    error_type: Literal["syntax", "lint", "test", "runtime", "static_check"]
     failed_code: str
     error_details: str
     attempt: int
