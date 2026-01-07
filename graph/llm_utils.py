@@ -159,12 +159,16 @@ def log_llm_interaction(
     logs_dir = Path(workspace_dir) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Capture timestamp once for consistency
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
+    timestamp_iso = now.isoformat()
+
     # Create log entry
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     log_file = logs_dir / f"{node_name}_{timestamp}.json"
 
     log_entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timestamp_iso,
         "node": node_name,
         "prompt": prompt,
         "response": response,
@@ -180,7 +184,7 @@ def log_llm_interaction(
     session_log = logs_dir / "session.log"
     with open(session_log, 'a', encoding='utf-8') as f:
         f.write(f"\n{'='*80}\n")
-        f.write(f"[{datetime.now().isoformat()}] {node_name.upper()}\n")
+        f.write(f"[{timestamp_iso}] {node_name.upper()}\n")
         f.write(f"{'='*80}\n\n")
 
         if reasoning_trace:
@@ -211,11 +215,14 @@ def log_execution(workspace_dir: str, node_name: str, state_update: Dict[str, An
     logs_dir = Path(workspace_dir) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Capture timestamp once for consistency
+    timestamp_iso = datetime.now().isoformat()
+
     execution_log = logs_dir / "execution.log"
 
     with open(execution_log, 'a', encoding='utf-8') as f:
         f.write(f"\n{'='*60}\n")
-        f.write(f"[{datetime.now().isoformat()}] NODE: {node_name}\n")
+        f.write(f"[{timestamp_iso}] NODE: {node_name}\n")
         f.write(f"{'='*60}\n")
 
         # Log key state changes
