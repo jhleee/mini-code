@@ -66,15 +66,24 @@ def create_llm_from_env() -> ChatOpenAI:
     Create ChatOpenAI instance from environment variables.
 
     Environment variables:
-        LLM_BASE_URL: API endpoint URL
+        LLM_BASE_URL: API endpoint URL (required)
         LLM_API_KEY: API key (default: "dummy")
         LLM_MODEL: Model name (default: "gpt-4o")
         LLM_TEMPERATURE: Temperature (default: 0.7)
 
     Returns:
         Configured ChatOpenAI instance
+
+    Raises:
+        ValueError: If LLM_BASE_URL is not set
     """
-    base_url = os.getenv("LLM_BASE_URL", "https://82c2209d4a22.ngrok-free.app/v1")
+    base_url = os.getenv("LLM_BASE_URL")
+    if not base_url:
+        raise ValueError(
+            "LLM_BASE_URL environment variable is required. "
+            "Set it to your LLM API endpoint URL."
+        )
+
     api_key = os.getenv("LLM_API_KEY", "dummy")
     model = os.getenv("LLM_MODEL", "gpt-4o")
     temperature = float(os.getenv("LLM_TEMPERATURE", "0.7"))
