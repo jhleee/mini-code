@@ -5,6 +5,7 @@ from pathlib import Path
 from graph.build_graph import build_agent
 from graph.state import AgentState
 from graph.workspace_manager import WorkspaceManager, print_session_info
+from graph.checkpoint_manager import CheckpointManager
 
 
 def load_prd(prd_path: str) -> str:
@@ -17,9 +18,19 @@ def run_agent(
     prd_path: str,
     base_url: str = None,
     session_id: str = None,
-    resume: bool = False
+    resume: bool = False,
+    from_checkpoint: int = None
 ):
-    """Run the file-centric coding agent with isolated workspace"""
+    """
+    Run the file-centric coding agent with isolated workspace
+
+    Args:
+        prd_path: Path to PRD file
+        base_url: LLM endpoint URL (overrides env var)
+        session_id: Custom session ID
+        resume: Resume latest session
+        from_checkpoint: Resume from specific task checkpoint (Phase 3)
+    """
 
     # Extract PRD name from path
     prd_name = Path(prd_path).stem
@@ -63,23 +74,41 @@ def run_agent(
         print(f"Building agent with environment variables")
     agent = build_agent(base_url=base_url, workspace_dir=workspace_path)
 
-    # Initialize state
-    initial_state: AgentState = {
-        "user_query": f"Implement this PRD: {prd_name}",
-        "prd_content": prd_content,
-        "file_map": {},
-        "tasks": [],
-        "current_task_idx": 0,
-        "context": "",
-        "generated_code": "",
-        "generated_test": "",  # Phase 1: separated test code
-        "feedback": None,      # Phase 2: rich feedback
-        "exec_result": None,   # backward compatibility
-        "retry_context": None, # Phase 3: differentiated error handling
-        "retry_count": 0,
-        "max_retries": 3,
-        "status": "initializing"
-    }
+    # Initialize or restore state (Phase 3: Checkpoint support)
+    checkpoint_manager = CheckpointManager(workspace_path)
+
+    if from_checkpoint is not None:
+        # Restore from specific checkpoint
+        print(f"\n[CHECKPOINT] Attempting to restore from task {from_checkpoint}")
+        checkpoint = checkpoint_manager.load_checkpoint(from_checkpoint)
+
+        if checkpoint:
+            initial_state = checkpoint_manager.restore_state(checkpoint)
+            print(f"[CHECKPOINT] Resuming from task {initial_state.get('current_task_idx', 0)}")
+        else:
+            print(f"[CHECKPOINT] Failed to load checkpoint, starting fresh")
+            initial_state = None
+    else:
+        initial_state = None
+
+    # Create fresh state if no checkpoint
+    if initial_state is None:
+        initial_state: AgentState = {
+            "user_query": f"Implement this PRD: {prd_name}",
+            "prd_content": prd_content,
+            "file_map": {},
+            "tasks": [],
+            "current_task_idx": 0,
+            "context": "",
+            "generated_code": "",
+            "generated_test": "",  # Phase 1: separated test code
+            "feedback": None,      # Phase 2: rich feedback
+            "exec_result": None,   # backward compatibility
+            "retry_context": None, # Phase 3: differentiated error handling
+            "retry_count": 0,
+            "max_retries": 3,
+            "status": "initializing"
+        }
 
     print("\n" + "="*60)
     print(f"Starting Coding Agent - Session: {session['session_id']}")
@@ -165,6 +194,13 @@ def main():
         default=None,
         help="LLM endpoint URL (overrides LLM_BASE_URL env var)"
     )
+    run_parser.add_argument(
+        "--from-checkpoint",
+        type=int,
+        default=None,
+        metavar="TASK_IDX",
+        help="Resume from specific task checkpoint (Phase 3: Filesystem Checkpoint)"
+    )
 
     # List command
     list_parser = subparsers.add_parser("list", help="List sessions")
@@ -185,7 +221,8 @@ def main():
             args.prd_path,
             base_url=args.base_url,
             session_id=args.session_id,
-            resume=args.resume
+            resume=args.resume,
+            from_checkpoint=args.from_checkpoint
         )
 
     elif args.command == "list":

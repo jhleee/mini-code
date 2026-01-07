@@ -10,8 +10,9 @@ Phase 3: Reflection Loop
 - RetryContext 생성 (에러 타입별 차별화)
 - 이전 에러 히스토리 추적
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from graph.state import AgentState, FeedbackResult, RetryContext
+from graph.checkpoint_manager import CheckpointManager
 
 
 class Critic:
@@ -19,7 +20,14 @@ class Critic:
     Critic with Rich Feedback (Phase 2)
 
     FeedbackResult를 사용하여 에러 타입별 상세 정보 로깅
+
+    Phase 3: Checkpoint support
+    Saves checkpoint on task completion
     """
+
+    def __init__(self, workspace_dir: Optional[str] = None):
+        self.workspace_dir = workspace_dir
+        self.checkpoint_manager = CheckpointManager(workspace_dir) if workspace_dir else None
 
     def __call__(self, state: AgentState) -> Dict[str, Any]:
         """Evaluate test results and update task status"""
@@ -58,6 +66,14 @@ class Critic:
 
             if feedback:
                 self._log_success_details(feedback)
+
+            # Save checkpoint (Phase 3)
+            if self.checkpoint_manager:
+                self.checkpoint_manager.save_checkpoint(
+                    state=state,
+                    task_idx=current_idx,
+                    tag="completed"
+                )
 
             return {
                 "tasks": tasks,

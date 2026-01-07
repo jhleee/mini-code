@@ -89,7 +89,7 @@ def build_agent(
     file_builder = FileBuilder()
     static_checker = StaticChecker()  # Phase 3: Code-Then-Execute gate
     executor = Executor(workspace_dir)
-    critic = Critic()
+    critic = Critic(workspace_dir)  # Phase 3: Checkpoint support
     test_generator = TestGenerator(llm, workspace_dir)
     repo_manager = RepoManager(workspace_dir)
 
