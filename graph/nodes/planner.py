@@ -7,7 +7,7 @@ Phase 1: Structured Output 적용
 """
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState, FileState, Task, PlannerOutput
@@ -15,17 +15,29 @@ from graph.state import AgentState, FileState, Task, PlannerOutput
 
 SYSTEM_PROMPT = """You are a senior software engineer planning file structure and implementation tasks.
 
-Your job: Analyze the PRD and create a FILE-CENTRIC plan.
+Your job: Analyze the PRD and create a FILE-CENTRIC plan with BOTH files AND tasks.
 
 CRITICAL RULES:
 1. Group related functions into SINGLE FILES (e.g., all calculator functions in calculator.py)
 2. Plan file structure BEFORE breaking down tasks
 3. Each task targets ONE file and adds/modifies ONE function
 4. Do NOT include test files in the file list - tests are auto-generated later
+5. You MUST create at least one task for each file - never return empty tasks!
+
+REQUIRED OUTPUT:
+- files: List of files to create (at least 1)
+- tasks: List of implementation tasks (at least 1 per file, NEVER empty!)
 
 Example for calculator PRD:
-- ONE file: calculator.py with purpose "Core arithmetic operations"
-- FOUR tasks: add, subtract, multiply, divide (all target calculator.py)
+Files:
+- path: "calculator.py", purpose: "Core arithmetic operations", functions: ["add", "subtract", "multiply", "divide", "parse_expression"]
+
+Tasks (ONE task per function):
+- task_id: 1, target_file: "calculator.py", action: "create", description: "Create add(a, b) function that returns a + b"
+- task_id: 2, target_file: "calculator.py", action: "append", description: "Create subtract(a, b) function that returns a - b"
+- task_id: 3, target_file: "calculator.py", action: "append", description: "Create multiply(a, b) function that returns a * b"
+- task_id: 4, target_file: "calculator.py", action: "append", description: "Create divide(a, b) function that returns a / b with zero division handling"
+- task_id: 5, target_file: "calculator.py", action: "append", description: "Create parse_expression(expr) function that parses and evaluates math expressions"
 """
 
 
@@ -80,6 +92,12 @@ class Planner:
             for f in file_map.values():
                 print(f"  - {f.path}: {f.purpose}")
 
+            # Validation: tasks must not be empty
+            if not tasks and file_map:
+                print(f"[PLANNER] WARNING: No tasks generated! Creating default tasks from files...")
+                tasks = self._generate_tasks_from_files(file_map)
+                print(f"[PLANNER] Generated {len(tasks)} default tasks")
+
         except Exception as e:
             print(f"[PLANNER] Structured output failed: {e}")
             print("[PLANNER] Falling back to regex parsing...")
@@ -95,6 +113,35 @@ class Planner:
             "max_retries": 3,
             "status": "planning_complete"
         }
+
+    def _generate_tasks_from_files(self, file_map: Dict[str, FileState]) -> List[Task]:
+        """Generate default tasks from file specifications when LLM returns empty tasks"""
+        tasks = []
+        task_id = 1
+
+        for path, file_state in file_map.items():
+            # If file has functions defined, create one task per function
+            if file_state.functions:
+                for i, func_name in enumerate(file_state.functions):
+                    action = "create" if i == 0 else "append"
+                    tasks.append(Task(
+                        task_id=task_id,
+                        target_file=path,
+                        action=action,
+                        description=f"Implement {func_name}() function in {path}"
+                    ))
+                    task_id += 1
+            else:
+                # No functions specified, create a single task for the file
+                tasks.append(Task(
+                    task_id=task_id,
+                    target_file=path,
+                    action="create",
+                    description=f"Implement {file_state.purpose} in {path}"
+                ))
+                task_id += 1
+
+        return tasks
 
     async def _fallback_parse(self, state: AgentState) -> tuple:
         """Fallback: regex 기반 JSON 파싱 (structured output 실패 시)"""
