@@ -4,13 +4,24 @@ CodeWriter Node - 태스크별 코드 생성
 Phase 1: Structured Output 적용
 - with_structured_output()으로 CodeWriterOutput 스키마 강제
 - generated_code와 generated_test 분리 반환
+- Reasoning model support: <think> tag handling
+
+Phase 3: Reflection Loop
+- RetryContext 기반 에러 타입별 프롬프트 차별화
+- 이전 에러 히스토리 포함
 """
 import json
 import re
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
-from graph.state import AgentState, CodeWriterOutput
+from graph.state import AgentState, CodeWriterOutput, RetryContext
+from graph.llm_utils import (
+    extract_response_content,
+    extract_think_content,
+    log_llm_interaction,
+    log_execution
+)
 
 
 SYSTEM_PROMPT = """You are an expert software engineer writing clean, production-ready code.
@@ -37,10 +48,12 @@ class CodeWriter:
 
     Uses llm.with_structured_output() to enforce CodeWriterOutput schema.
     Returns generated_code and generated_test separately.
+    Logs reasoning traces from reasoning models.
     """
 
-    def __init__(self, llm: ChatOpenAI):
+    def __init__(self, llm: ChatOpenAI, workspace_dir: str = None):
         self.llm = llm
+        self.workspace_dir = workspace_dir
         # Structured output을 지원하는 LLM으로 변환
         self.structured_llm = llm.with_structured_output(CodeWriterOutput)
 
@@ -55,26 +68,21 @@ class CodeWriter:
         current_task = tasks[current_idx]
         target_file = current_task.target_file
         context = state.get("context", "")
+        retry_context = state.get("retry_context")
 
         # Get current file content
         file_map = state.get("file_map", {})
         file_state = file_map.get(target_file)
         current_content = file_state.content if file_state else ""
 
-        prompt = f"""Task: {current_task.description}
-
-Target file: {target_file}
-Action: {current_task.action}
-
-Current file content:
-```python
-{current_content if current_content else "# Empty file"}
-```
-
-Context from workspace:
-{context}
-
-Generate the code snippet to {current_task.action}."""
+        # Build prompt (Phase 3: differentiated based on retry context)
+        prompt = self._build_prompt(
+            task=current_task,
+            target_file=target_file,
+            current_content=current_content,
+            context=context,
+            retry_context=retry_context
+        )
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
@@ -107,27 +115,49 @@ Generate the code snippet to {current_task.action}."""
             print("[CODE_WRITER] Falling back to regex parsing...")
 
             # Fallback: 기존 방식
-            code, test_code = await self._fallback_parse(messages)
+            code, test_code = await self._fallback_parse(messages, current_task.description)
             imports = []
 
-        return {
+        result = {
             "generated_code": code,
             "generated_test": test_code,
             "status": f"code_generated_task_{current_idx}"
         }
 
-    async def _fallback_parse(self, messages: list) -> tuple:
+        # Log execution
+        if self.workspace_dir:
+            log_execution(self.workspace_dir, "code_writer", result)
+
+        return result
+
+    async def _fallback_parse(self, messages: list, task_description: str = "") -> tuple:
         """Fallback: regex 기반 파싱 (structured output 실패 시)"""
         response = await self.llm.ainvoke(messages)
 
+        # Extract content and remove <think> tags from reasoning models
+        raw_content = response.content if hasattr(response, 'content') else str(response)
+        reasoning_trace = extract_think_content(raw_content)
+        content = extract_response_content(response)
+
+        # Log interaction
+        if self.workspace_dir:
+            log_llm_interaction(
+                workspace_dir=self.workspace_dir,
+                node_name="code_writer_fallback",
+                prompt=task_description[:500],
+                response=content[:1000],
+                reasoning_trace=reasoning_trace,
+                metadata={"task": task_description}
+            )
+
         # Try JSON extraction
-        result = self._extract_json_from_markdown(response.content)
+        result = self._extract_json_from_markdown(content)
         if result and "code" in result:
             return result.get("code", ""), result.get("test_code", "")
 
         # Try code block extraction
         print("[CODE_WRITER] JSON failed, extracting code blocks...")
-        all_blocks = re.findall(r'```(?:python)?\n(.*?)```', response.content, re.DOTALL)
+        all_blocks = re.findall(r'```(?:python)?\n(.*?)```', content, re.DOTALL)
 
         code = all_blocks[0].strip() if len(all_blocks) > 0 else ""
         test_code = all_blocks[1].strip() if len(all_blocks) > 1 else "def test_placeholder():\n    pass"
@@ -155,6 +185,105 @@ Generate the code snippet to {current_task.action}."""
             return json.loads(text)
         except:
             return None
+
+    def _build_prompt(
+        self,
+        task,
+        target_file: str,
+        current_content: str,
+        context: str,
+        retry_context: RetryContext = None
+    ) -> str:
+        """
+        Build differentiated prompt based on retry context (Phase 3)
+
+        Different error types require different fix strategies:
+        - syntax: Focus on Python syntax rules
+        - lint: Focus on code style and best practices
+        - test: Focus on logic and edge cases
+        - static_check: Combined syntax/lint guidance
+        """
+        base_prompt = f"""Task: {task.description}
+
+Target file: {target_file}
+Action: {task.action}
+
+Current file content:
+```python
+{current_content if current_content else "# Empty file"}
+```
+
+Context from workspace:
+{context}"""
+
+        if not retry_context:
+            # First attempt - standard prompt
+            return base_prompt + f"\n\nGenerate the code snippet to {task.action}."
+
+        # Retry attempt - add error-specific guidance
+        error_type = retry_context.error_type
+        attempt_info = f"Attempt {retry_context.attempt}/{retry_context.max_attempts}"
+
+        retry_prompt = f"""
+
+--- RETRY INFORMATION ---
+{attempt_info}
+
+Previous attempt failed with {error_type.upper()} error:
+```
+{retry_context.error_details}
+```
+
+Failed code:
+```python
+{retry_context.failed_code}
+```
+"""
+
+        # Error type-specific guidance
+        if error_type == "syntax":
+            guidance = """
+FOCUS: Fix Python syntax errors
+- Check for missing colons, parentheses, brackets
+- Verify proper indentation (4 spaces)
+- Ensure valid Python keywords and operators
+- Check string quotes and escape characters
+"""
+        elif error_type in ["lint", "static_check"]:
+            guidance = """
+FOCUS: Fix code style and lint errors
+- Follow PEP8 style guidelines
+- Remove unused imports and variables
+- Fix line length issues (max 88-100 chars)
+- Ensure proper naming conventions
+- Fix undefined names and imports
+"""
+        elif error_type == "test":
+            guidance = """
+FOCUS: Fix failing tests
+- Review test failure messages carefully
+- Check edge cases and boundary conditions
+- Verify function logic and return values
+- Handle exceptions properly
+- Ensure correct data types
+"""
+        else:
+            guidance = """
+FOCUS: Fix runtime or logic errors
+- Review error message and traceback
+- Check variable names and scopes
+- Verify function signatures
+- Handle edge cases
+"""
+
+        # Add previous error history if available
+        history = ""
+        if retry_context.previous_errors:
+            history = "\n\nPrevious error history:\n"
+            for i, err in enumerate(retry_context.previous_errors, 1):
+                history += f"{i}. {err[:200]}\n"
+
+        return base_prompt + retry_prompt + guidance + history + "\n\nGenerate CORRECTED code that fixes the above error(s)."
 
     def __call__(self, state: AgentState) -> Dict[str, Any]:
         """Sync wrapper for LangGraph compatibility"""

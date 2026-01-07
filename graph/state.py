@@ -48,6 +48,25 @@ class LintError(BaseModel):
     severity: Literal["error", "warning"]
 
 
+# ============================================================
+# Phase 3: Reflection Loop Models
+# ============================================================
+
+class RetryContext(BaseModel):
+    """
+    Retry context for differentiated error handling (Phase 3)
+
+    Provides context-specific information for code_writer to
+    generate better fixes based on error type.
+    """
+    error_type: Literal["syntax", "lint", "type", "test", "runtime", "static_check"]
+    failed_code: str
+    error_details: str
+    attempt: int
+    max_attempts: int
+    previous_errors: List[str] = []  # Track error history
+
+
 class TestResult(BaseModel):
     """Individual test result"""
     name: str
@@ -126,6 +145,9 @@ class AgentState(TypedDict):
     # Feedback (Phase 2: replaces exec_result)
     feedback: FeedbackResult
     exec_result: ExecutionResult  # kept for backward compatibility
+
+    # Retry Context (Phase 3: differentiated error handling)
+    retry_context: Optional[RetryContext]
 
     # Control
     retry_count: int

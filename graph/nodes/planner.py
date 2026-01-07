@@ -4,6 +4,7 @@ Planner Node - PRD를 분석하여 파일 구조와 태스크를 생성
 Phase 1: Structured Output 적용
 - with_structured_output()으로 Pydantic 모델 강제
 - regex 파싱 제거, 파싱 에러 방지
+- Reasoning model support: <think> tag handling
 """
 import json
 import re
@@ -11,6 +12,12 @@ from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import AgentState, FileState, Task, PlannerOutput
+from graph.llm_utils import (
+    extract_response_content,
+    extract_think_content,
+    log_llm_interaction,
+    log_execution
+)
 
 
 SYSTEM_PROMPT = """You are a senior software engineer planning file structure and implementation tasks.
@@ -47,10 +54,12 @@ class Planner:
 
     Uses llm.with_structured_output() to enforce PlannerOutput schema.
     Falls back to regex parsing if structured output fails.
+    Logs reasoning traces from reasoning models.
     """
 
-    def __init__(self, llm: ChatOpenAI):
+    def __init__(self, llm: ChatOpenAI, workspace_dir: str = None):
         self.llm = llm
+        self.workspace_dir = workspace_dir
         # Structured output을 지원하는 LLM으로 변환
         self.structured_llm = llm.with_structured_output(PlannerOutput)
 
@@ -105,7 +114,7 @@ class Planner:
             # Fallback: 기존 regex 방식으로 재시도
             file_map, tasks = await self._fallback_parse(state)
 
-        return {
+        result = {
             "file_map": file_map,
             "tasks": tasks,
             "current_task_idx": 0,
@@ -113,6 +122,12 @@ class Planner:
             "max_retries": 3,
             "status": "planning_complete"
         }
+
+        # Log execution
+        if self.workspace_dir:
+            log_execution(self.workspace_dir, "planner", result)
+
+        return result
 
     def _generate_tasks_from_files(self, file_map: Dict[str, FileState]) -> List[Task]:
         """Generate default tasks from file specifications when LLM returns empty tasks"""
@@ -145,15 +160,32 @@ class Planner:
 
     async def _fallback_parse(self, state: AgentState) -> tuple:
         """Fallback: regex 기반 JSON 파싱 (structured output 실패 시)"""
+        prompt = f"PRD:\n{state['prd_content']}"
         messages = [
             SystemMessage(content=SYSTEM_PROMPT + "\n\nReturn ONLY valid JSON."),
-            HumanMessage(content=f"PRD:\n{state['prd_content']}")
+            HumanMessage(content=prompt)
         ]
 
         response = await self.llm.ainvoke(messages)
 
+        # Extract content and remove <think> tags from reasoning models
+        raw_content = response.content if hasattr(response, 'content') else str(response)
+        reasoning_trace = extract_think_content(raw_content)
+        content = extract_response_content(response)
+
+        # Log interaction
+        if self.workspace_dir:
+            log_llm_interaction(
+                workspace_dir=self.workspace_dir,
+                node_name="planner_fallback",
+                prompt=prompt[:1000],  # Truncate for logging
+                response=content[:1000],
+                reasoning_trace=reasoning_trace,
+                metadata={"prd_length": len(state['prd_content'])}
+            )
+
         try:
-            json_str = self._extract_json(response.content)
+            json_str = self._extract_json(content)
             result = json.loads(json_str)
 
             file_map = {}
